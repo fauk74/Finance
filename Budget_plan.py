@@ -1,15 +1,10 @@
-
-
-
-
 import pandas as pd
 import numpy as np
 import random
-import matplotlib.pyplot as plt
 
 
 
-# Definition of usel functions
+# Definition of useful functions to create and simulate a plan
 
 def linear_trend_plan(start_year=2019, n_years=13, n_items=1, y0=1, increase=0.02, var=0.10, suff='Prod_', decimals=2,
                       tv=0, tv_method="avg"):
@@ -27,6 +22,7 @@ def linear_trend_plan(start_year=2019, n_years=13, n_items=1, y0=1, increase=0.0
 
     array1 = np.zeros((n_items, n_years + tv))
     lista = []
+    list_columns = [str(b) for b in range(start_year, start_year + n_years)]
     for k in range(0, n_items):
         y = y0
         for i in range(0, n_years + tv):
@@ -34,21 +30,24 @@ def linear_trend_plan(start_year=2019, n_years=13, n_items=1, y0=1, increase=0.0
             forecast = y + y * increase + y * random.uniform(-var, var)
             array1[k, i] = forecast
             y = forecast
-        if k > 1:
-            a = suff + str(k)
-        else:
-            a = suff
-        lista.append(a)
-    if tv == 1:
 
-        if tv_method == "avg":
-            array1[0][-1] = np.mean(array1[0][-6:-1])
+        if k==0:
+            b=""
         else:
-            array1[0][-1] = array1[0][-2]
-    list_columns = [str(b) for b in range(start_year, start_year + n_years)]
-    if tv==1: list_columns.append("TV")
-    df = pd.DataFrame(array1, columns=list_columns,
-                      index=lista)
+            b=str(k)
+        a = suff + b
+        lista.append(a)
+        
+    if tv == 1:
+            list_columns.append("TV")
+            for k in range(0, n_items):
+                if tv_method == "avg":
+                    array1[k][-1] = np.mean(array1[k][-6:-1])
+                else:
+                    array1[k][-1] = array1[k][-2]
+    
+
+    df = pd.DataFrame(array1, columns=list_columns,index=lista)
 
     return df.round(decimals=decimals)
 
@@ -125,7 +124,10 @@ class Plan:
         self.change_rate = change_rate
         self.turn_over = turn_over
         self.decimals = decimals
-
+        self.tv=tv
+        self.tv_method=tv_method
+        if self.growth_rate >= self.discount_rate : raise "In the current model it is not foreseen that the Growth Rate is higher or equal to Discount Rate!"
+        
         # internal functions to be applied to period of discoung and discounting factors
         list_years = [str(a) for a in range(start_year, start_year + n_years)]
         if tv == 1:
@@ -190,8 +192,8 @@ class Plan:
         self.Changes_NWC = self.Net_Working_Capital - self.Net_Working_Capital.shift(1, axis=1)
         self.Changes_NWC.set_index([['Changes_NWC']])
 
-        ### DA FINIRE IL CHANGE IN W.C.
-        ### DA FARE IL TV
+        
+        
 
         # table PL creation
         self.PL = pd.concat(
@@ -206,6 +208,9 @@ class Plan:
         self.Parameters = pd.concat(
             [self.Period_of_Discounting, self.Discounting_Factor, self.Income_Tax_Rate, self.Inflation, self.Turnover,
              self.Change_Rate])
+        if self.tv==1:
+            
+            self.terminal_value_infinite=self.FCF['TV']/((self.discount_rate-self.growth_rate)*self.Discounting_Factor.iloc[0,-2])
 
     def update_fixed(self):
         self.Fixed_Costs = pd.concat([self.HR_Costs, self.Maintenance_Costs, self.Other_Fixed_Costs])
@@ -221,7 +226,7 @@ class Plan:
     def update_revenues(self):
         self.Revenues = (self.Product_Prices * self.Product_Table).agg(["sum"]).set_index([['Revenues']])
 
-    def compare(self, x):
+    def compare(self, x, delta_params=True):
         # function to create a comparison (a difference) between two different plans
         y = copy.deepcopy(self)
         # callable= [a for a in dir(PL) if (not a.startswith("__") and not a.startswith("u"))]
@@ -244,16 +249,30 @@ class Plan:
         y.FCF = self.FCF - x.FCF
         y.Net_Working_Capital = self.Net_Working_Capital - x.Net_Working_Capital
         y.Changes_NWC = self.Changes_NWC - x.Changes_NWC
-        y.DFCF = self.DCF - x.DFCF
+        y.DFCF = self.DFCF - x.DFCF
         y.PL = self.PL - x.PL
 
         # Other parameters and rates
-        y.period_of_discounting = self.period_of_discounting - x.period_of_discounting
-        y.discounting_factor = self.discounting_factor - x.discounting_factor
-        y.Income_Taxes = self.Income_Taxes - x.Income_Taxes
-        y.Inflation = self.Inflation - x.Inflation
-        y.Turnover = self.Turnover - x.Turnover
-        y.update  # this generates the calculation of the PL internally in y
+        if delta_params==True:
+            y.Period_of_Discounting = self.Period_of_Discounting - x.Period_of_Discounting
+            y.Discounting_Factor = self.Discounting_Factor - x.Discounting_Factor
+            y.Income_Tax_Rate = self.Income_Tax_Rate - x.Income_Tax_Rate
+            y.Inflation = self.Inflation - x.Inflation
+            y.Turnover = self.Turnover - x.Turnover
+            y.Change_Rate=self.Change_Rate-x.Change_Rate
+            if self.tv==1:
+                y.terminal_value_infinite=self.terminal_value_infinite-x.terminal_value_infinite
+            y.Parameters = pd.concat([y.Period_of_Discounting, y.Discounting_Factor, y.Income_Tax_Rate, y.Inflation, y.Turnover,
+            y.Change_Rate])    
+        else:
+            y.Period_of_Discounting=x.Period_of_Discounting
+            y.Discounting_Factor =  x.Discounting_Factor
+            y.Income_Taxes =  x.Income_Taxes
+            y.Inflation =  x.Inflation
+            y.Turnover =  x.Turnover
+            y.Change_Rate=x.Change_Rate
+            y.update()
+        #y.update  # this generates the calculation of the PL internally in y
         return y
 
     def operation_two_rows(self, x, y, index="sum", oper="+"):
@@ -274,3 +293,22 @@ class Plan:
         else:
             raise f"Wrong operation : {oper} allowed only + - * / "
         return z
+
+    def save(self, file):
+        with pd.ExcelWriter(file) as writer:  
+            self.PL.to_excel(writer, sheet_name='Profit_Loss')
+            self.PL_FCF.to_excel(writer, sheet_name='Free_Cash_Flow')
+            self.Parameters.to_excel(writer, sheet_name='Parameters')
+            self.Product_Table.to_excel(writer, sheet_name='Product_Table')
+            self.Product_Prices.to_excel(writer, sheet_name='Product_Prices')
+            self.Raw_Materials_Quantities.to_excel(writer, sheet_name='Raw_Materials_Quantities')
+            self.Raw_Materials_Prices.to_excel(writer, sheet_name='Raw_Materials_Prices')
+    
+    def load(self,file):        
+ 
+        self.Product_Table=pd.read_excel(file,sheet_name='Product_Table',index_col=0,header=0)
+        self.Product_Prices=pd.read_excel(file,sheet_name='Product_Prices',index_col=0,header=0)
+        self.Raw_Materials_Quantities=pd.read_excel(file, sheet_name='Raw_Materials_Quantities',index_col=0,header=0)
+        self.Raw_Materials_Prices=pd.read_excel(file, sheet_name='Raw_Materials_Prices',index_col=0,header=0)
+        self.Parameters=pd.read_excel(file, sheet_name='Parameters',index_col=0,header=0)
+    
